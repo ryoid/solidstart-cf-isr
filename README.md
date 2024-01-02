@@ -1,6 +1,6 @@
 # SolidStart ISR on Cloudflare Pages
 
-Read [blog post](https://ryanjc.com/blog/implement-isr-with-nitro-on-cloudflare/)
+Read [blog post](https://ryanjc.com/blog/implement-isr-in-nitro-on-cloudflare/)
 
 ---
 
