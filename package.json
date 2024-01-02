@@ -1,0 +1,29 @@
+{
+  "name": "solidstart-cf-isr",
+  "type": "module",
+  "scripts": {
+    "dev": "vinxi dev",
+    "build": "vinxi build --preset ./preset",
+    "start": "vinxi start"
+  },
+  "dependencies": {
+    "@cloudflare/kv-asset-handler": "^0.3.0",
+    "@cloudflare/workers-types": "^4.20231218.0",
+    "@solidjs/router": "^0.10.5",
+    "@solidjs/start": "^0.4.2",
+    "autoprefixer": "^10.4.14",
+    "h3": "^1.9.0",
+    "nitro": "^2.2.28",
+    "postcss": "^8.4.26",
+    "solid-js": "^1.8.7",
+    "tailwindcss": "^3.3.3",
+    "unstorage": "^1.10.1",
+    "vinxi": "0.0.62"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "nitropack": "^2.8.1"
+  }
+}

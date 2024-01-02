@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "allowJs": true,
+    "noEmit": true,
+    "strict": true,
+    "types": ["vinxi/client"],
+    "isolatedModules": true,
+		"baseUrl": ".",
+    "paths": {
+      "~/*": ["./src/*"],
+      "#imports": [".vinxi/types/nitro-imports"]
+    }
+  },
+  "include": [".vinxi/types/nitro.d.ts"]
+}
