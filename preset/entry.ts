@@ -65,7 +65,7 @@ export function storeIsrPage(
 
 // @ts-expect-error - Rollup Virtual Modules
 import { requestHasBody } from "#internal/nitro/utils"
-declare function requestHasBody(request: globalThis.Request): boolean
+declare function requestHasBody(request: Request): boolean
 // @ts-expect-error - Rollup Virtual Modules
 import { isPublicAssetURL } from "#internal/nitro/virtual/public-assets"
 import { getAssetFromKV } from "@cloudflare/kv-asset-handler"
@@ -94,7 +94,7 @@ export default {
 
     if (isIsrRoute(routeRules)) {
       try {
-        return await getAssetFromKV(
+        const res = await getAssetFromKV(
           {
             request: request as unknown as Request,
             waitUntil(promise) {
@@ -109,6 +109,8 @@ export default {
             // mapRequestToAsset: baseURLModifier,
           }
         )
+        console.log("got re from asset kv", res)
+        return res
       } catch {
         // Ignore
       }
