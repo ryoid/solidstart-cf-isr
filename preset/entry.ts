@@ -1,5 +1,11 @@
 // import "#internal/nitro/virtual/polyfill"
-import type { Request as CFRequest, EventContext, KVNamespace } from "@cloudflare/workers-types"
+import {
+  Request as CFRequest,
+  Response as CFResponse,
+  EventContext,
+  KVNamespace,
+  caches,
+} from "@cloudflare/workers-types"
 import type { NitroRouteRules } from "nitropack"
 import { useNitroApp } from "nitropack/dist/runtime/app"
 import { getRouteRulesForPath } from "nitropack/dist/runtime/route-rules"
@@ -68,7 +74,6 @@ import { requestHasBody } from "#internal/nitro/utils"
 declare function requestHasBody(request: Request): boolean
 // @ts-expect-error - Rollup Virtual Modules
 import { isPublicAssetURL } from "#internal/nitro/virtual/public-assets"
-import { getAssetFromKV } from "@cloudflare/kv-asset-handler"
 declare function isPublicAssetURL(id: string): boolean
 
 const nitroApp = useNitroApp()
@@ -91,29 +96,23 @@ export default {
     globalThis.__env__ = env
 
     const routeRules = getRouteRulesForPath(url.pathname)
+    const edgeTTL = typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30 // 30 days
 
+    let res: Response | undefined
     if (isIsrRoute(routeRules)) {
-      try {
-        const res = await getAssetFromKV(
-          {
-            request: request as unknown as Request,
-            waitUntil(promise) {
-              return context.waitUntil(promise)
-            },
-          },
-          {
-            cacheControl: {
-              edgeTTL: typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30, // 30 days
-            },
-            ASSET_NAMESPACE: env.PAGES_CACHE_KV,
-            // mapRequestToAsset: baseURLModifier,
-          }
-        )
-        console.log("got re from asset kv", res)
+      const cache = caches.default
+
+      const pathKey = url.pathname.replace(/^\/+/, "") // remove prepended /
+      // TODO investigate ideal key behavior
+      const cacheKey = new CFRequest(`${url.origin}/${pathKey}` + url.search, request)
+      res = (await cache.match(cacheKey)) as Response | undefined
+      if (res) {
+        console.log("CDN Cache HIT", cacheKey.url, [...res.headers.entries()])
+        res = new Response(res.body, res)
+        res.headers.set("x-cdn-cache", "HIT")
         return res
-      } catch {
-        // Ignore
       }
+
       const page = await getIsrPage(request, env)
       if (page.value && page.metadata) {
         const age = Math.ceil(Date.now() / 1000 - page.metadata.ctime)
@@ -137,7 +136,14 @@ export default {
               headers: request.headers as unknown as Headers,
               body,
             })
-            storeIsrPage(request, env, routeRules, res.clone())
+            // determine Cloudflare cache behavior
+            const cacheRes = res.clone()
+            cacheRes.headers.set("cache-control", `max-age=${edgeTTL}`)
+            cacheRes.headers.set("x-nitro-isr", "HIT")
+            await Promise.all([
+              cache.put(cacheKey, cacheRes as unknown as CFResponse),
+              storeIsrPage(request, env, routeRules, res.clone()),
+            ])
           })()
           // Revalidate in the background
           context.waitUntil(revalidate)
@@ -161,7 +167,7 @@ export default {
       }
     }
 
-    let res = await nitroApp.localFetch(url.pathname + url.search, {
+    res = await nitroApp.localFetch(url.pathname + url.search, {
       context: {
         cf: request.cf,
         waitUntil: (promise) => context.waitUntil(promise),
@@ -178,12 +184,43 @@ export default {
       body,
     })
 
-    if (isIsrRoute(routeRules) && res.body !== null) {
-      res = new Response(res.body, res)
-      res.headers.set("age", "0")
-      res.headers.set("x-nitro-isr", "MISS")
+    if (isIsrRoute(routeRules)) {
+      // https://github.com/cloudflare/kv-asset-handler/blob/main/src/index.ts#L242
+      // Errored response
+      if (res.status > 300 && res.status < 400) {
+        if (res.body && "cancel" in Object.getPrototypeOf(res.body)) {
+          // Body exists and environment supports readable streams
+          res.body.cancel()
+        } else {
+          // Environment doesnt support readable streams, or null repsonse body. Nothing to do
+        }
+        res = new Response(null, res)
+      } else {
+        let opts = {
+          headers: new Headers(res.headers),
+          status: 0,
+          statusText: "",
+        }
 
-      context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
+        opts.headers.set("age", "0")
+        opts.headers.set("x-nitro-isr", "MISS")
+
+        if (res.status) {
+          opts.status = res.status
+          opts.statusText = res.statusText
+        } else if (opts.headers.has("Content-Range")) {
+          opts.status = 206
+          opts.statusText = "Partial Content"
+        } else {
+          opts.status = 200
+          opts.statusText = "OK"
+        }
+        res = new Response(res.body, opts)
+        res.headers.set("cache-control", `s-maxage=${edgeTTL}`)
+        // res.headers.set('cache-control', `max-age=${cacheControl.browserTTL}`)
+        context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
+        context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
+      }
     }
     return res
   },
