@@ -17,7 +17,6 @@ interface CFPagesEnv {
 
   // Declare bindings herea
   PAGES_CACHE_KV: KVNamespace
-  __STATIC_CONTENT: KVNamespace
   [key: string]: any
 }
 
@@ -43,14 +42,14 @@ export async function getIsrPage(request: CFRequest, env: CFPagesEnv) {
  */
 export function isIsrRoute(
   routeRules: NitroRouteRules
-): routeRules is Omit<NitroRouteRules, "isr"> & { isr: number | boolean } {
+): routeRules is Omit<NitroRouteRules, "isr"> & { isr: number | true } {
   return typeof routeRules.isr === "number" || routeRules.isr === true
 }
 
 export function storeIsrPage(
   request: CFRequest,
   env: CFPagesEnv,
-  routeRules: Omit<NitroRouteRules, "isr"> & { isr: number | boolean },
+  routeRules: Omit<NitroRouteRules, "isr"> & { isr: number | true },
   response: Response
 ) {
   const cacheKey = getIsrCacheKey(request, env)
@@ -69,6 +68,7 @@ import { requestHasBody } from "#internal/nitro/utils"
 declare function requestHasBody(request: globalThis.Request): boolean
 // @ts-expect-error - Rollup Virtual Modules
 import { isPublicAssetURL } from "#internal/nitro/virtual/public-assets"
+import { getAssetFromKV } from "@cloudflare/kv-asset-handler"
 declare function isPublicAssetURL(id: string): boolean
 
 const nitroApp = useNitroApp()
@@ -89,11 +89,29 @@ export default {
 
     // Expose latest env to the global context
     globalThis.__env__ = env
-    console.log("custom env", env.__STATIC_CONTENT)
 
     const routeRules = getRouteRulesForPath(url.pathname)
 
     if (isIsrRoute(routeRules)) {
+      try {
+        return await getAssetFromKV(
+          {
+            request: request as unknown as Request,
+            waitUntil(promise) {
+              return context.waitUntil(promise)
+            },
+          },
+          {
+            cacheControl: {
+              edgeTTL: typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30, // 30 days
+            },
+            ASSET_NAMESPACE: env.PAGES_CACHE_KV,
+            // mapRequestToAsset: baseURLModifier,
+          }
+        )
+      } catch {
+        // Ignore
+      }
       const page = await getIsrPage(request, env)
       if (page.value && page.metadata) {
         const age = Math.ceil(Date.now() / 1000 - page.metadata.ctime)
