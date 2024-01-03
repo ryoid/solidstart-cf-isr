@@ -17,6 +17,7 @@ interface CFPagesEnv {
 
   // Declare bindings herea
   PAGES_CACHE_KV: KVNamespace
+  __STATIC_CONTENT: KVNamespace
   [key: string]: any
 }
 
@@ -88,6 +89,7 @@ export default {
 
     // Expose latest env to the global context
     globalThis.__env__ = env
+    console.log("custom env", env.__STATIC_CONTENT)
 
     const routeRules = getRouteRulesForPath(url.pathname)
 
