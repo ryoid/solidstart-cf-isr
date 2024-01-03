@@ -71,7 +71,7 @@ export function storeIsrPage(
 
 // @ts-expect-error - Rollup Virtual Modules
 import { requestHasBody } from "#internal/nitro/utils"
-declare function requestHasBody(request: Request): boolean
+declare function requestHasBody(request: globalThis.Request): boolean
 // @ts-expect-error - Rollup Virtual Modules
 import { isPublicAssetURL } from "#internal/nitro/virtual/public-assets"
 declare function isPublicAssetURL(id: string): boolean
