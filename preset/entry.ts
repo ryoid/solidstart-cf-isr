@@ -22,10 +22,9 @@ interface CFPagesEnv {
 
 export type GeneratedPageMetadata = {
   /**
-   * Creation time in seconds since epoch
+   * Modified timestamp in seconds
    */
-  ctime: number
-  isr: number | boolean
+  mtime: number
 }
 
 function getIsrCacheKey(request: CFRequest, env: CFPagesEnv) {
@@ -57,10 +56,14 @@ export function storeIsrPage(
     // Expiration TTL must be at least 60 seconds
     expirationTtl: 60 * 60 * 24 * 30, // 30 days
     metadata: {
-      ctime: Date.now() / 1000,
-      isr: routeRules.isr,
+      mtime: Date.now() / 1000,
     } satisfies GeneratedPageMetadata,
   })
+}
+
+function getCacheControlHeader(routeRules: NitroRouteRules) {
+  const edgeTTL = typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30 // 30 days
+  return `public, s-maxage=${edgeTTL}, stale-while-revalidate`
 }
 
 // @ts-expect-error - Rollup Virtual Modules
@@ -90,14 +93,18 @@ export default {
     globalThis.__env__ = env
 
     const routeRules = getRouteRulesForPath(url.pathname)
+    const cacheControl = getCacheControlHeader(routeRules)
+    const forceRevalidate =
+      request.method === "GET" && request.headers.get("x-nitro-revalidate") === process.env.NITRO_REVALIDATE_TOKEN
+    const isIsr = isIsrRoute(routeRules)
 
-    if (isIsrRoute(routeRules)) {
+    if (isIsr && !forceRevalidate) {
       const page = await getIsrPage(request, env)
       if (page.value && page.metadata) {
-        const age = Math.ceil(Date.now() / 1000 - page.metadata.ctime)
+        const age = Math.ceil(Date.now() / 1000 - page.metadata.mtime)
 
         // Stale page
-        if (typeof page.metadata.isr === "number" && age >= page.metadata.isr) {
+        if (typeof routeRules.isr === "number" && age >= routeRules.isr) {
           const revalidate = (async () => {
             const res = await nitroApp.localFetch(url.pathname + url.search, {
               context: {
@@ -123,6 +130,7 @@ export default {
           return new Response(page.value, {
             headers: {
               "content-type": "text/html",
+              "cache-control": cacheControl,
               age: age.toString(),
               "x-nitro-isr": "REVALIDATE",
             },
@@ -132,6 +140,7 @@ export default {
         return new Response(page.value, {
           headers: {
             "content-type": "text/html",
+            "cache-control": cacheControl,
             age: age.toString(),
             "x-nitro-isr": "HIT",
           },
@@ -156,12 +165,41 @@ export default {
       body,
     })
 
-    if (isIsrRoute(routeRules) && res.body !== null) {
-      res = new Response(res.body, res)
-      res.headers.set("age", "0")
-      res.headers.set("x-nitro-isr", "MISS")
+    if (isIsr) {
+      // https://github.com/cloudflare/kv-asset-handler/blob/main/src/index.ts#L242
+      // Errored response
+      if (res.status > 300 && res.status < 400) {
+        if (res.body && "cancel" in Object.getPrototypeOf(res.body)) {
+          // Body exists and environment supports readable streams
+          res.body.cancel()
+        } else {
+          // Environment doesnt support readable streams, or null repsonse body. Nothing to do
+        }
+        res = new Response(null, res)
+      } else {
+        let opts = {
+          headers: new Headers(res.headers),
+          status: 0,
+          statusText: "",
+        }
 
-      context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
+        opts.headers.set("age", "0")
+        opts.headers.set("cache-control", cacheControl)
+        opts.headers.set("x-nitro-isr", "MISS")
+
+        if (res.status) {
+          opts.status = res.status
+          opts.statusText = res.statusText
+        } else if (opts.headers.has("Content-Range")) {
+          opts.status = 206
+          opts.statusText = "Partial Content"
+        } else {
+          opts.status = 200
+          opts.statusText = "OK"
+        }
+        res = new Response(res.body, opts)
+        context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
+      }
     }
     return res
   },
