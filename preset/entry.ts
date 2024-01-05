@@ -31,7 +31,6 @@ export type GeneratedPageMetadata = {
    * Creation time in seconds since epoch
    */
   ctime: number
-  isr: number | boolean
 }
 
 function getIsrCacheKey(request: CFRequest, env: CFPagesEnv) {
@@ -64,9 +63,13 @@ export function storeIsrPage(
     expirationTtl: 60 * 60 * 24 * 30, // 30 days
     metadata: {
       ctime: Date.now() / 1000,
-      isr: routeRules.isr,
     } satisfies GeneratedPageMetadata,
   })
+}
+
+function getCacheControlHeader(routeRules: NitroRouteRules) {
+  const edgeTTL = typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30 // 30 days
+  return `public, s-maxage=${edgeTTL}, stale-while-revalidate`
 }
 
 // @ts-expect-error - Rollup Virtual Modules
@@ -96,7 +99,7 @@ export default {
     globalThis.__env__ = env
 
     const routeRules = getRouteRulesForPath(url.pathname)
-    const edgeTTL = typeof routeRules.isr === "number" ? routeRules.isr : 60 * 60 * 24 * 30 // 30 days
+    const cacheControl = getCacheControlHeader(routeRules)
 
     let res: Response | undefined
     if (isIsrRoute(routeRules)) {
@@ -118,7 +121,7 @@ export default {
         const age = Math.ceil(Date.now() / 1000 - page.metadata.ctime)
 
         // Stale page
-        if (typeof page.metadata.isr === "number" && age >= page.metadata.isr) {
+        if (typeof routeRules.isr === "number" && age >= routeRules.isr) {
           const revalidate = (async () => {
             const res = await nitroApp.localFetch(url.pathname + url.search, {
               context: {
@@ -138,7 +141,7 @@ export default {
             })
             // determine Cloudflare cache behavior
             const cacheRes = res.clone()
-            cacheRes.headers.set("cache-control", `max-age=${edgeTTL}`)
+            cacheRes.headers.set("cache-control", cacheControl)
             cacheRes.headers.set("x-nitro-isr", "HIT")
             await Promise.all([
               cache.put(cacheKey, cacheRes as unknown as CFResponse),
@@ -151,6 +154,7 @@ export default {
           return new Response(page.value, {
             headers: {
               "content-type": "text/html",
+              "cache-control": cacheControl,
               age: age.toString(),
               "x-nitro-isr": "REVALIDATE",
             },
@@ -160,6 +164,7 @@ export default {
         return new Response(page.value, {
           headers: {
             "content-type": "text/html",
+            "cache-control": cacheControl,
             age: age.toString(),
             "x-nitro-isr": "HIT",
           },
@@ -203,6 +208,7 @@ export default {
         }
 
         opts.headers.set("age", "0")
+        opts.headers.set("cache-control", cacheControl)
         opts.headers.set("x-nitro-isr", "MISS")
 
         if (res.status) {
@@ -216,8 +222,7 @@ export default {
           opts.statusText = "OK"
         }
         res = new Response(res.body, opts)
-        res.headers.set("cache-control", `s-maxage=${edgeTTL}`)
-        // res.headers.set('cache-control', `max-age=${cacheControl.browserTTL}`)
+        res.headers.set("cache-control", cacheControl)
         context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
         context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
       }
