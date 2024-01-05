@@ -100,9 +100,12 @@ export default {
 
     const routeRules = getRouteRulesForPath(url.pathname)
     const cacheControl = getCacheControlHeader(routeRules)
+    const forceRevalidate =
+      request.method === "GET" && request.headers.get("x-nitro-revalidate") !== process.env.NITRO_REVALIDATE_TOKEN
+    const isIsr = isIsrRoute(routeRules)
 
     let res: Response | undefined
-    if (isIsrRoute(routeRules)) {
+    if (isIsr && !forceRevalidate) {
       const cache = caches.default
 
       const pathKey = url.pathname.replace(/^\/+/, "") // remove prepended /
@@ -189,7 +192,7 @@ export default {
       body,
     })
 
-    if (isIsrRoute(routeRules)) {
+    if (isIsr) {
       // https://github.com/cloudflare/kv-asset-handler/blob/main/src/index.ts#L242
       // Errored response
       if (res.status > 300 && res.status < 400) {
@@ -223,7 +226,6 @@ export default {
         }
         res = new Response(res.body, opts)
         res.headers.set("cache-control", cacheControl)
-        context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
         context.waitUntil(storeIsrPage(request, env, routeRules, res.clone()))
       }
     }
