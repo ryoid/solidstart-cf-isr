@@ -4,12 +4,12 @@ const buildEnv = process.env
 
 export function GET() {
   const metaEnv = Object.fromEntries(Object.entries(import.meta.env).filter((e) => typeof e[1] !== "object"))
-  getRequestEvent()
+  const event = getRequestEvent()!
+  console.log('event', event)
   return {
     "build-env": metaEnv,
     "process-env": process.env,
-    getRequestEvent: getRequestEvent(),
-    cfglobal: globalThis.__env__,
+    // getRequestEvent: event.context.cloudflare?.env,
     buildEnv,
   }
 }
