@@ -10,7 +10,7 @@ export function GET() {
   return {
     "build-env": metaEnv,
     "process-env": process.env,
-    // getRequestEvent: event.context.cloudflare?.env,
+    getRequestEvent: event.context?.cloudflare?.env,
     buildEnv,
   }
 }
